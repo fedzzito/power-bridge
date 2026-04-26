@@ -1,0 +1,74 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/fedzzito/power-bridge/internal/config"
+	"github.com/fedzzito/power-bridge/internal/poweropti"
+	"github.com/fedzzito/power-bridge/internal/server"
+)
+
+var (
+	configFile = flag.String("config", "/etc/power-bridge/config.yaml", "path to config file")
+	listenAddr = flag.String("listen", "", "HTTP listen address (overrides config, e.g. :8080)")
+)
+
+func main() {
+	flag.Parse()
+
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	log.Printf("power-bridge starting, config=%s", *configFile)
+
+	cfg, err := config.Load(*configFile)
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+
+	if *listenAddr != "" {
+		cfg.ListenAddr = *listenAddr
+	}
+	if cfg.ListenAddr == "" {
+		cfg.ListenAddr = ":80"
+	}
+
+	var poller *poweropti.Client
+	var cancelPoller context.CancelFunc
+
+	if cfg.Configured {
+		log.Printf("configured: poweropti=%s hostname=%s", cfg.PoweroptiIP, cfg.Hostname)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancelPoller = cancel
+		poller = poweropti.NewClient(cfg)
+		go poller.Run(ctx)
+	} else {
+		log.Println("not configured – starting setup mode")
+	}
+
+	srv := server.New(cfg, *configFile, poller)
+
+	go func() {
+		log.Printf("listening on %s", cfg.ListenAddr)
+		if err := srv.Listen(cfg.ListenAddr); err != nil {
+			log.Fatalf("server: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("shutting down…")
+	if cancelPoller != nil {
+		cancelPoller()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	srv.Shutdown(ctx)
+	log.Println("stopped")
+}

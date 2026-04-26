@@ -1,0 +1,42 @@
+# power-bridge — Example Configuration
+#
+# Copy this file to /etc/power-bridge/config.yaml and edit to match your setup.
+# The first-run setup web UI will also write this file automatically.
+
+# ── Home WiFi ────────────────────────────────────────────────────────────────
+wifi_ssid: "MyHomeWifi"
+wifi_password: "supersecret"
+
+# ── powerfox poweropti ───────────────────────────────────────────────────────
+# Local IP address of the poweropti device
+poweropti_ip: "192.168.1.100"
+# API key (= device serial number, used as HTTP Basic Auth password)
+poweropti_api_key: "MY_API_KEY"
+
+# ── Virtual Shelly identity ───────────────────────────────────────────────────
+# Choose a unique MAC for this virtual device (any valid MAC will work)
+shelly_mac: "AA:BB:CC:DD:EE:FF"
+# mDNS hostname — device appears as <hostname>.local
+hostname: "shellypro3em-poweropti"
+
+# ── Behaviour ────────────────────────────────────────────────────────────────
+# Target battery system (affects minor quirks in API responses)
+# Choices: standard | marstek | noah | hoymiles
+device_profile: "standard"
+
+# How single-phase power is distributed across the three Shelly phases
+# Choices: equal (L1=L2=L3=total/3) | l1 (all on L1, L2/L3 = 0)
+phase_mode: "equal"
+
+# Poweropti polling interval in seconds (minimum 1)
+poll_interval_sec: 3
+
+# After this many seconds without a valid reading the status turns "invalid"
+stale_timeout_sec: 30
+
+# HTTP listen address — use ":80" for production, ":8080" for development
+listen_addr: ":80"
+
+# Set to true once the first-run setup has been completed.
+# The setup web UI sets this automatically.
+configured: false
