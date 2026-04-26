@@ -1,1 +1,322 @@
 # power-bridge
+
+**Schlanker Ersatz für uni-meter auf dem Raspberry Pi Zero W v1.1** — ohne Java.
+
+Ein powerfox **poweropti** wird lokal ausgelesen und als virtueller **Shelly Pro 3EM** (Gen 2) im Netzwerk präsentiert, damit Marstek-, Noah/Growatt- und Hoymiles-Speicher Nulleinspeisung umsetzen können.
+
+---
+
+## Architektur
+
+```
+┌─────────────┐  HTTP/Basic-Auth  ┌───────────────────────────────┐
+│  poweropti  │ ──────────────── ▶ │                               │
+└─────────────┘                   │   power-bridge (Go, ARMv6)    │
+                                  │                               │
+┌─────────────┐  HTTP / mDNS      │  Port 80                      │
+│  Marstek /  │ ◀──────────────── │  ├─ /rpc/EM.GetStatus?id=0   │
+│  Noah /     │                   │  ├─ /rpc/Shelly.GetStatus     │
+│  Hoymiles   │                   │  ├─ /rpc/Shelly.GetDeviceInfo │
+└─────────────┘                   │  ├─ /rpc/Shelly.GetConfig     │
+                                  │  ├─ /rpc/Shelly.GetComponents │
+                                  │  └─ / (Status-UI)             │
+                                  └───────────────────────────────┘
+```
+
+**Komponenten:**
+
+| Paket | Aufgabe |
+|---|---|
+| `cmd/power-bridge` | Entry-point, Flag-Parsing, Signal-Handling |
+| `internal/config` | YAML-Config laden/speichern |
+| `internal/poweropti` | HTTP-Polling des poweropti, Thread-safe Reading |
+| `internal/server` | Unified HTTP-Server (Shelly-API + Status-UI + Setup-UI) |
+
+---
+
+## Hardware-Voraussetzungen
+
+- Raspberry Pi Zero W v1.1 (ARMv6 32-bit)
+- Raspberry Pi OS Lite 32-bit (Bookworm oder Bullseye)
+- SD-Karte ≥ 4 GB
+- USB-Netzteil 5 V / 1 A
+
+---
+
+## SD-Karte vorbereiten (Raspberry Pi Imager)
+
+1. **Raspberry Pi Imager** herunterladen: https://www.raspberrypi.com/software/
+2. Gerät wählen: **Raspberry Pi Zero W**
+3. OS wählen: **Raspberry Pi OS Lite (32-bit)**
+4. Speicher wählen: SD-Karte
+5. Zahnrad-Symbol → **Erweiterte Optionen**:
+   - Hostname: `shellypro3em-poweropti`
+   - SSH aktivieren
+   - _(WiFi erst nach der Installation über power-bridge einrichten)_
+6. Schreiben starten
+
+---
+
+## Installation
+
+### Binärdatei kompilieren (auf dem Entwicklungsrechner)
+
+```bash
+# ARMv6 (Raspberry Pi Zero W)
+GOOS=linux GOARCH=arm GOARM=6 go build -ldflags="-s -w" \
+    -o power-bridge-armv6 ./cmd/power-bridge
+```
+
+### Auf dem Pi installieren
+
+```bash
+# Binärdatei auf den Pi kopieren
+scp power-bridge-armv6 pi@<PI_IP>:/tmp/power-bridge
+
+# SSH auf den Pi
+ssh pi@<PI_IP>
+sudo -i
+
+# Installationsskript ausführen
+cd /tmp
+git clone https://github.com/fedzzito/power-bridge  # oder Dateien manuell kopieren
+cd power-bridge
+BINARY_SRC=/tmp/power-bridge bash install.sh
+```
+
+Das Skript:
+- Installiert hostapd, dnsmasq, avahi-daemon
+- Kopiert die Binärdatei nach `/usr/local/bin/power-bridge`
+- Legt `/etc/power-bridge/config.yaml` an
+- Richtet den systemd-Service ein
+- Registriert den mDNS-Service bei Avahi
+- Startet den Access Point "ShellyMeter-Setup"
+
+---
+
+## Ersteinrichtung (WLAN-Setup)
+
+1. Mit dem Smartphone/Laptop mit dem WLAN **"ShellyMeter-Setup"** verbinden
+   (kein Passwort)
+2. Browser öffnen: **http://192.168.4.1**
+3. Formular ausfüllen:
+   - Heim-WLAN SSID + Passwort
+   - poweropti IP-Adresse
+   - poweropti API-Key (= Seriennummer des Geräts)
+   - Geräteprofil (Marstek / Noah / Standard)
+   - Virtuelle Shelly-MAC (frei wählbar, muss im Netz eindeutig sein)
+   - Hostname (z.B. `shellypro3em-poweropti`)
+4. **"Speichern & Verbinden"** klicken
+5. Der Pi verbindet sich automatisch mit dem Heimnetz
+
+---
+
+## poweropti API
+
+Die poweropti-Abfrage erfolgt gegen:
+
+```
+GET http://<poweropti_ip>/api/user/current
+Authorization: Basic base64(<api_key>:<api_key>)
+```
+
+Erwartetes JSON-Format:
+
+```json
+{
+  "currentwatt": 1234.5,
+  "isvalid": true,
+  "obis1_8_0": 12345.678,
+  "obis2_8_0": 100.000
+}
+```
+
+| Feld | Bedeutung |
+|---|---|
+| `currentwatt` | Aktuelle Leistung in W (>0 = Bezug, <0 = Einspeisung) |
+| `isvalid` | Ob die Messung gültig ist |
+| `obis1_8_0` | Gesamtenergie Bezug (kWh, OBIS 1.8.0) |
+| `obis2_8_0` | Gesamtenergie Einspeisung (kWh, OBIS 2.8.0) |
+
+Alternativ werden `mw` (Milliwatt) und `wh_in`/`wh_out` unterstützt.
+
+---
+
+## Shelly Pro 3EM Gen-2 API
+
+### `GET /rpc/EM.GetStatus?id=0`
+
+```json
+{
+  "id": 0,
+  "total_act_power": 1200.0,
+  "total_aprt_power": 1200.0,
+  "total_current": 1.739,
+  "a_current": 0.580, "a_voltage": 230.0, "a_act_power": 400.0, "a_pf": 1.0, "a_freq": 50.0,
+  "b_current": 0.580, "b_voltage": 230.0, "b_act_power": 400.0, "b_pf": 1.0, "b_freq": 50.0,
+  "c_current": 0.580, "c_voltage": 230.0, "c_act_power": 400.0, "c_pf": 1.0, "c_freq": 50.0,
+  "total_act_energy": 12345678.0,
+  "total_act_ret_energy": 100000.0,
+  "n_current": null
+}
+```
+
+> **Vorzeichen:** `total_act_power > 0` = Netzbezug, `< 0` = Einspeisung
+> (entspricht dem Shelly Pro 3EM Gen-2 Verhalten)
+
+### `GET /rpc/Shelly.GetDeviceInfo`
+
+```json
+{
+  "name": "shellypro3em-poweropti",
+  "id": "shellypro3em-aabbccddeeff",
+  "mac": "AA:BB:CC:DD:EE:FF",
+  "model": "SPEM-003CEBEU",
+  "gen": 2,
+  "fw_id": "20231219-133953/v2.2.1-g21b75e0",
+  "ver": "2.2.1",
+  "app": "Pro3EM",
+  "auth_en": false,
+  "auth_domain": null
+}
+```
+
+---
+
+## Konfiguration (`/etc/power-bridge/config.yaml`)
+
+```yaml
+wifi_ssid: "MyHomeWifi"
+wifi_password: "supersecret"
+poweropti_ip: "192.168.1.100"
+poweropti_api_key: "MY_API_KEY"
+shelly_mac: "AA:BB:CC:DD:EE:FF"
+hostname: "shellypro3em-poweropti"
+device_profile: "standard"   # marstek | noah | hoymiles | standard
+phase_mode: "equal"          # equal (L1=L2=L3) | l1 (alles auf L1)
+poll_interval_sec: 3
+stale_timeout_sec: 30
+listen_addr: ":80"
+configured: true
+```
+
+---
+
+## mDNS / Avahi
+
+Der Dienst erscheint im Netz als:
+- **HTTP:** `shellypro3em-poweropti.local` (Port 80)
+- **Shelly Discovery:** `_shelly._tcp` (wird von Marstek/Noah-Apps gesucht)
+
+Avahi-Service-Datei: `avahi/power-bridge.service` wird automatisch nach
+`/etc/avahi/services/power-bridge.service` installiert.
+
+---
+
+## Service-Verwaltung
+
+```bash
+# Status prüfen
+systemctl status power-bridge
+
+# Logs ansehen
+journalctl -u power-bridge -f
+
+# Neustart
+systemctl restart power-bridge
+
+# Nach Config-Änderung
+systemctl restart power-bridge
+```
+
+---
+
+## Tests
+
+```bash
+PI="shellypro3em-poweropti.local"  # oder IP-Adresse
+
+# Shelly-API testen
+curl "http://$PI/rpc/EM.GetStatus?id=0"
+curl "http://$PI/rpc/Shelly.GetStatus"
+curl "http://$PI/rpc/Shelly.GetDeviceInfo"
+
+# Statusseite
+curl "http://$PI/"
+
+# Poweropti-Test
+curl "http://$PI/api/test/poweropti"
+```
+
+---
+
+## Marstek / Noah / Hoymiles – Geräteerkennung
+
+### Marstek
+
+1. Marstek-App → Einstellungen → Stromzähler hinzufügen
+2. Typ: **Shelly Pro 3EM**
+3. Automatische Erkennung aktivieren → der Pi sollte erscheinen
+   (mDNS `_shelly._tcp`)
+4. Alternativ: IP-Adresse manuell eingeben
+
+**Troubleshooting Marstek:**
+- App und Pi müssen im selben Subnetz sein
+- Avahi-Daemon muss laufen: `systemctl status avahi-daemon`
+- mDNS testen: `avahi-browse -t _shelly._tcp` (vom PC)
+- `device_profile: marstek` in config.yaml setzen
+
+### Noah / Growatt
+
+1. Noah-App → Energie-Einstellungen → Externen Zähler hinzufügen
+2. Typ: **Shelly Pro 3EM**
+3. IP-Adresse des Pi eingeben (IP oder `.local`-Name)
+4. `phase_mode: l1` kann helfen, wenn Noah nur L1 auswertet
+
+**Troubleshooting Noah:**
+- Prüfen ob `total_act_power` korrekt vorzeichenbehaftet ist (negativ = Einspeisung)
+- `device_profile: noah` aktivieren
+- manche Noah-Firmware-Versionen benötigen Port 80 explizit
+
+### Allgemeine Tipps
+
+| Problem | Lösung |
+|---|---|
+| Gerät nicht gefunden | `avahi-browse -at` ausführen, Avahi-Daemon prüfen |
+| Leistung immer 0 | `curl http://<PI>/api/test/poweropti` – poweropti-Verbindung testen |
+| Falsches Vorzeichen | poweropti-Dokumentation prüfen, ggf. Vorzeichen in config negieren |
+| mDNS funktioniert nicht | Im gleichen WLAN? Router blockiert mDNS (Multicast)? |
+
+---
+
+## Performance
+
+- RAM-Verbrauch: typisch **< 10 MB** (Go-Binary ohne VM-Overhead)
+- CPU-Last Pi Zero W: **< 1 %** bei 3-Sekunden-Intervall
+- Binärgröße (stripped): ca. **4 MB** für ARMv6
+
+---
+
+## Entwicklung / lokaler Test
+
+```bash
+# Config anlegen
+mkdir -p /tmp/pb-test
+cp config.yaml.example /tmp/pb-test/config.yaml
+# config.yaml anpassen (configured: true, poweropti_ip etc.)
+
+# Starten (kein root nötig auf Port 8080)
+go run ./cmd/power-bridge \
+    -config /tmp/pb-test/config.yaml \
+    -listen :8080
+
+# Testen
+curl "http://localhost:8080/rpc/EM.GetStatus?id=0"
+curl "http://localhost:8080/rpc/Shelly.GetDeviceInfo"
+```
+
+---
+
+## Lizenz
+
+MIT

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>power-bridge – Status</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#1a1a2e;color:#eee;padding:1rem}
+h1{color:#e94560;margin-bottom:1.5rem;font-size:1.4rem}
+h2{color:#aaa;font-size:.85rem;text-transform:uppercase;letter-spacing:.05em;margin:1.5rem 0 .5rem}
+.card{background:#16213e;border-radius:.75rem;padding:1.25rem;margin-bottom:1rem}
+.row{display:flex;justify-content:space-between;align-items:center;padding:.4rem 0;
+     border-bottom:1px solid #1e2a50}
+.row:last-child{border-bottom:none}
+.label{font-size:.85rem;color:#aaa}
+.value{font-size:.95rem;font-weight:600}
+.ok{color:#6ee7b7}
+.err{color:#f87171}
+.warn{color:#fcd34d}
+.big-watt{font-size:2rem;font-weight:700;color:#e94560;text-align:center;padding:.5rem 0}
+.btn{display:inline-block;padding:.55rem 1.2rem;border-radius:.5rem;border:none;
+  cursor:pointer;font-size:.9rem;font-weight:600;transition:opacity .15s;margin:.3rem .2rem}
+.btn-primary{background:#e94560;color:#fff}
+.btn-secondary{background:#0f3460;color:#eee;border:1px solid #333}
+.btn:hover{opacity:.85}
+.btn:disabled{opacity:.4;cursor:default}
+#log-box{background:#0a0a1a;border-radius:.5rem;padding:.75rem;font-family:monospace;
+  font-size:.78rem;color:#9ca3af;max-height:12rem;overflow-y:auto;white-space:pre-wrap}
+.alert{padding:.75rem 1rem;border-radius:.5rem;margin-bottom:1rem;font-size:.9rem}
+.alert-success{background:#064e3b;color:#6ee7b7}
+.endpoints{font-family:monospace;font-size:.8rem;color:#5b8dee}
+.endpoint{display:block;padding:.2rem 0}
+</style>
+</head>
+<body>
+<h1>⚡ power-bridge</h1>
+
+{{if .SetupDone}}
+<div class="alert alert-success">✅ Konfiguration gespeichert. Verbinde mit WLAN…</div>
+{{end}}
+
+<div class="card">
+  <div class="row">
+    <span class="label">Gerät</span>
+    <span class="value">{{.Hostname}}.local</span>
+  </div>
+  <div class="row">
+    <span class="label">Poweropti</span>
+    <span class="value {{if .PoweroptiOK}}ok{{else}}err{{end}}" id="po-status">
+      {{if .PoweroptiOK}}✓ Erreichbar{{else}}✗ Fehler{{end}}
+    </span>
+  </div>
+  <div class="row">
+    <span class="label">IP</span>
+    <span class="value">{{.PoweroptiIP}}</span>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Aktuelle Leistung</h2>
+  <div class="big-watt" id="watt-display">{{.WattDisplay}}</div>
+</div>
+
+<div class="card">
+  <h2>Shelly-Endpunkte</h2>
+  <div class="endpoints">
+    <a class="endpoint" href="/rpc/EM.GetStatus?id=0" target="_blank">/rpc/EM.GetStatus?id=0</a>
+    <a class="endpoint" href="/rpc/Shelly.GetStatus"  target="_blank">/rpc/Shelly.GetStatus</a>
+    <a class="endpoint" href="/rpc/Shelly.GetDeviceInfo" target="_blank">/rpc/Shelly.GetDeviceInfo</a>
+    <a class="endpoint" href="/rpc/Shelly.GetConfig"  target="_blank">/rpc/Shelly.GetConfig</a>
+    <a class="endpoint" href="/rpc/Shelly.GetComponents" target="_blank">/rpc/Shelly.GetComponents</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Aktionen</h2>
+  <button class="btn btn-secondary" onclick="testPoweropti()">🔌 Poweropti testen</button>
+  <a href="/rpc/EM.GetStatus?id=0" class="btn btn-secondary" target="_blank">📡 Shelly JSON</a>
+  <button class="btn btn-primary"  onclick="restartService()">🔄 Service neu starten</button>
+  <a href="/setup" class="btn btn-secondary">⚙️ Einstellungen</a>
+  <p id="action-msg" style="font-size:.8rem;color:#aaa;margin-top:.5rem"></p>
+</div>
+
+<div class="card">
+  <h2>Logs</h2>
+  <div id="log-box">{{range .Logs}}{{.}}
+{{end}}</div>
+</div>
+
+<script>
+(function poll(){
+  fetch('/api/status').then(r=>r.json()).then(function(d){
+    var w=d.watt;
+    var txt= w>=0 ? w.toFixed(1)+' W (Bezug)' : (-w).toFixed(1)+' W (Einspeisung)';
+    document.getElementById('watt-display').textContent=d.poweropti_ok?txt:'–';
+    var s=document.getElementById('po-status');
+    s.textContent=d.poweropti_ok?'✓ Erreichbar':'✗ Fehler ('+d.errors+')';
+    s.className='value '+(d.poweropti_ok?'ok':'err');
+  }).catch(function(){});
+  setTimeout(poll,3000);
+})();
+
+function testPoweropti(){
+  fetch('/api/test/poweropti').then(r=>r.json()).then(function(d){
+    document.getElementById('action-msg').textContent=
+      d.valid ? 'OK: '+d.watt.toFixed(1)+' W' : 'Fehler: '+JSON.stringify(d);
+  });
+}
+function restartService(){
+  if(!confirm('Service wirklich neu starten?'))return;
+  fetch('/api/restart',{method:'POST'}).then(function(){
+    document.getElementById('action-msg').textContent='Neustart angefordert…';
+  });
+}
+
+// Auto-refresh logs every 10 s
+(function pollLogs(){
+  fetch('/api/logs').then(r=>r.json()).then(function(d){
+    var box=document.getElementById('log-box');
+    box.textContent=(d.lines||[]).join('\n');
+    box.scrollTop=box.scrollHeight;
+  }).catch(function(){});
+  setTimeout(pollLogs,10000);
+})();
+</script>
+</body>
+</html>

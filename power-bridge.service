@@ -1,0 +1,29 @@
+[Unit]
+Description=power-bridge – powerfox poweropti → virtual Shelly Pro 3EM
+Documentation=https://github.com/fedzzito/power-bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=power-bridge
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+ExecStart=/usr/local/bin/power-bridge \
+    -config /etc/power-bridge/config.yaml \
+    -listen :80
+Restart=on-failure
+RestartSec=5s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=power-bridge
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=yes
+ReadWritePaths=/etc/power-bridge /etc/wpa_supplicant
+
+[Install]
+WantedBy=multi-user.target

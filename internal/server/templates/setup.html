@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>power-bridge – Ersteinrichtung</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#1a1a2e;color:#eee;padding:1rem}
+h1{color:#e94560;margin-bottom:1.5rem;font-size:1.4rem}
+h2{color:#aaa;font-size:.9rem;text-transform:uppercase;letter-spacing:.05em;margin:1.5rem 0 .5rem}
+.card{background:#16213e;border-radius:.75rem;padding:1.25rem;margin-bottom:1rem}
+label{display:block;font-size:.85rem;color:#aaa;margin-bottom:.25rem}
+input,select{width:100%;padding:.6rem .75rem;border-radius:.5rem;border:1px solid #333;
+  background:#0f3460;color:#eee;font-size:1rem;margin-bottom:.75rem}
+input:focus,select:focus{outline:none;border-color:#e94560}
+.btn{display:inline-block;padding:.65rem 1.5rem;border-radius:.5rem;border:none;
+  cursor:pointer;font-size:1rem;font-weight:600;transition:opacity .15s}
+.btn-primary{background:#e94560;color:#fff}
+.btn-secondary{background:#0f3460;color:#eee;border:1px solid #333}
+.btn:hover{opacity:.85}
+.alert{padding:.75rem 1rem;border-radius:.5rem;margin-bottom:1rem;font-size:.9rem}
+.alert-error{background:#4a0e0e;color:#f87171}
+.alert-success{background:#064e3b;color:#6ee7b7}
+.hint{font-size:.78rem;color:#666;margin-top:-.5rem;margin-bottom:.75rem}
+.scan-btn{background:none;border:none;color:#5b8dee;cursor:pointer;font-size:.8rem;
+  text-decoration:underline;margin-bottom:.5rem}
+#ssid-list{display:none;list-style:none;background:#0f3460;border-radius:.5rem;
+  padding:.5rem;margin-bottom:.75rem}
+#ssid-list li{padding:.35rem .5rem;cursor:pointer;border-radius:.3rem}
+#ssid-list li:hover{background:#1a4a80;color:#fff}
+</style>
+</head>
+<body>
+<h1>⚡ power-bridge Setup</h1>
+
+{{if .Error}}
+<div class="alert alert-error">{{.Error}}</div>
+{{end}}
+
+<form method="POST" action="/setup/save">
+
+  <div class="card">
+    <h2>Heim-WLAN</h2>
+    <label>SSID (Netzwerkname)</label>
+    <button type="button" class="scan-btn" onclick="scanWifi()">🔍 Netzwerke suchen</button>
+    <ul id="ssid-list"></ul>
+    <input type="text" name="wifi_ssid" id="wifi_ssid" placeholder="MeinWLAN"
+           value="{{.Cfg.WIFISSID}}" required>
+    <label>Passwort</label>
+    <input type="password" name="wifi_password" placeholder="••••••••"
+           value="{{.Cfg.WIFIPassword}}">
+  </div>
+
+  <div class="card">
+    <h2>poweropti</h2>
+    <label>IP-Adresse des poweropti</label>
+    <input type="text" name="poweropti_ip" placeholder="192.168.1.100"
+           value="{{.Cfg.PoweroptiIP}}" required>
+    <label>API-Key / Seriennummer</label>
+    <input type="text" name="poweropti_api_key" placeholder="abc123"
+           value="{{.Cfg.PoweroptiAPIKey}}" required>
+    <p class="hint">Wird als HTTP-Basic-Auth-Passwort verwendet (Username = API-Key).</p>
+  </div>
+
+  <div class="card">
+    <h2>Virtuelle Shelly-Identität</h2>
+    <label>MAC-Adresse (virtuell)</label>
+    <input type="text" name="shelly_mac" placeholder="AA:BB:CC:DD:EE:FF"
+           value="{{.Cfg.ShellyMAC}}" required
+           pattern="^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$">
+    <p class="hint">Format: XX:XX:XX:XX:XX:XX — frei wählbar, sollte eindeutig im Netz sein.</p>
+    <label>Hostname</label>
+    <input type="text" name="hostname" placeholder="shellypro3em-poweropti"
+           value="{{.Cfg.Hostname}}" required>
+    <p class="hint">Gerät erscheint im Netz als &lt;hostname&gt;.local</p>
+  </div>
+
+  <div class="card">
+    <h2>Geräteprofil &amp; Phasen</h2>
+    <label>Zielspeicher / Profil</label>
+    <select name="device_profile">
+      <option value="standard" {{if eq .Cfg.DeviceProfile "standard"}}selected{{end}}>Standard</option>
+      <option value="marstek"  {{if eq .Cfg.DeviceProfile "marstek"}} selected{{end}}>Marstek</option>
+      <option value="noah"     {{if eq .Cfg.DeviceProfile "noah"}}    selected{{end}}>Noah / Growatt</option>
+      <option value="hoymiles" {{if eq .Cfg.DeviceProfile "hoymiles"}}selected{{end}}>Hoymiles</option>
+    </select>
+    <label>Phasenverteilung</label>
+    <select name="phase_mode">
+      <option value="equal" {{if eq .Cfg.PhaseMode "equal"}}selected{{end}}>Gleich (L1=L2=L3)</option>
+      <option value="l1"    {{if eq .Cfg.PhaseMode "l1"}}   selected{{end}}>Alles auf L1</option>
+    </select>
+  </div>
+
+  <button type="submit" class="btn btn-primary" style="width:100%">💾 Speichern &amp; Verbinden</button>
+</form>
+
+<script>
+function scanWifi(){
+  fetch('/setup/scan').then(r=>r.json()).then(d=>{
+    var list=document.getElementById('ssid-list');
+    list.innerHTML='';
+    (d.ssids||[]).forEach(function(s){
+      var li=document.createElement('li');
+      li.textContent=s;
+      li.onclick=function(){
+        document.getElementById('wifi_ssid').value=s;
+        list.style.display='none';
+      };
+      list.appendChild(li);
+    });
+    list.style.display='block';
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+# Build artifacts
+/power-bridge
+/power-bridge-*
+*.out
+
+# Go
+vendor/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Secrets / local config
+config.yaml
+
+# OS
+.DS_Store
