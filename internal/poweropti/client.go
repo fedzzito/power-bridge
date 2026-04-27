@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"sync"
@@ -87,14 +88,14 @@ func (c *Client) Run(ctx context.Context) {
 	defer ticker.Stop()
 
 	// Poll immediately on start.
-	c.poll()
+	c.poll(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			c.poll()
+			c.poll(ctx)
 		}
 	}
 }
@@ -113,8 +114,8 @@ func (c *Client) ConsecutiveErrors() int {
 	return c.errors
 }
 
-func (c *Client) poll() {
-	r, err := c.fetch()
+func (c *Client) poll(ctx context.Context) {
+	r, err := c.fetch(ctx)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err != nil {
@@ -130,13 +131,13 @@ func (c *Client) poll() {
 	c.latest = *r
 }
 
-func (c *Client) fetch() (*Reading, error) {
+func (c *Client) fetch(ctx context.Context) (*Reading, error) {
 	url := fmt.Sprintf("http://%s/api/user/current", c.cfg.PoweroptiIP)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +155,7 @@ func (c *Client) fetch() (*Reading, error) {
 	}
 
 	var ar apiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&ar); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8192)).Decode(&ar); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
